@@ -12,5 +12,23 @@
     "cheerio": "^1.0.0-rc.12",
     "luxon": "^3.4.0",
     "compromise": "^14.0.0"
+
+    {
+  "name": "daily-email-workflows",
+  "version": "1.0.0",
+  "description": "AI Investor Daily newsletter automation",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "send": "node send-test-email.js"
+  },
+  "dependencies": {
+    "rss-parser": "^3.12.0",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "luxon": "^3.4.0",
+    "compromise": "^14.10.1",
+    "nodemailer": "^6.9.0",
+    "googleapis": "^118.0.0"
   }
 }
