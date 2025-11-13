@@ -13,7 +13,7 @@
     "luxon": "^3.4.0",
     "compromise": "^14.0.0"
 
-    {
+  },
   "name": "daily-email-workflows",
   "version": "1.0.0",
   "description": "AI Investor Daily newsletter automation",
