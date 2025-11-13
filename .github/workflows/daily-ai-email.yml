@@ -27,6 +27,9 @@ jobs:
       - name: Run generator
         run: node index.js
 
+      - name: Set email file path
+        run: echo "EMAIL_FILE=output/daily-email-$(date -u +'%Y-%m-%d').html" >> $GITHUB_ENV
+      
       - name: Send email
         uses: dawidd6/action-send-mail@v3
         with:
