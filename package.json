@@ -1,0 +1,16 @@
+{
+  "name": "ai-daily-auto-updater",
+  "version": "1.0.0",
+  "description": "AI Investor Daily — fetch free AI articles, extract first 100 words, pick stocks (>=3 small-caps), and render HTML",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "rss-parser": "^3.12.0",
+    "cheerio": "^1.0.0-rc.12",
+    "luxon": "^3.4.0",
+    "compromise": "^14.0.0"
+  }
+}
