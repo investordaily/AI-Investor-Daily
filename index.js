@@ -85,18 +85,52 @@ async function isLikelyPaywalled(url) {
 
 async function fetchArticleText(url) {
   try {
-    const r = await axios.get(url, { timeout: 12000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const r = await axios.get(url, {
+      timeout: 12000,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
     const $ = cheerio.load(r.data);
-    // heuristics: prefer article > p, otherwise all <p>
-    let paragraphs = $('article p').map((i, el) => $(el).text()).get();
-    if (paragraphs.length === 0) paragraphs = $('p').map((i, el) => $(el).text()).get();
-    const text = paragraphs.join('\n\n').replace(/\s+/g, ' ').trim();
-    return text;
+
+    // Try to target article-like containers
+    let paragraphs = [];
+    const articleSelectors = [
+      'article p',
+      '.article-content p',
+      '.post-content p',
+      '.entry-content p',
+      '.story-body p',
+      '.main-content p'
+    ];
+    for (const sel of articleSelectors) {
+      const found = $(sel).map((i, el) => $(el).text().trim()).get();
+      if (found.length > 3) { // likely a real article
+        paragraphs = found;
+        break;
+      }
+    }
+
+    // Fallback: use all <p> tags if no article selector matched
+    if (paragraphs.length === 0) {
+      paragraphs = $('p').map((i, el) => $(el).text().trim()).get();
+    }
+
+    // Clean and join
+    const text = paragraphs.join(' ').replace(/\s+/g, ' ').trim();
+
+    // ✅ Limit to 100 words and append ellipsis if truncated
+    const words = text.split(/\s+/);
+    let excerpt = words.slice(0, 100).join(' ');
+    if (words.length > 100) excerpt += '…';
+
+    return excerpt;
+
   } catch (err) {
     console.warn(`Failed fetchArticleText ${url}: ${err.message}`);
     return '';
   }
 }
+
+
 
 function firstNWords(text, n) {
   if (!text) return '';
@@ -185,9 +219,8 @@ function escapeHtml(s) {
     const paywalled = await isLikelyPaywalled(it.link);
     if (!paywalled) {
       // fetch text and excerpt
-      const text = await fetchArticleText(it.link);
-      const excerpt = firstNWords(text, 100); // first 100 words
-      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, text, excerpt });
+      const excerpt = await fetchArticleText(it.link);
+      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, excerpt });
       console.log('Added free article:', it.title);
     } else {
       console.log('Skipped (likely paywalled):', it.title);
@@ -201,9 +234,8 @@ function escapeHtml(s) {
     for (const it of candidates) {
       if (freeArticles.length >= MAX_ARTICLES) break;
       if (freeArticles.find(a => a.link === it.link)) continue;
-      const text = await fetchArticleText(it.link);
-      const excerpt = firstNWords(text, 100);
-      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, text, excerpt });
+      const excerpt = await fetchArticleText(it.link);
+      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, excerpt });
     }
   }
 
