@@ -1,13 +1,13 @@
 name: Daily AI Email Generator
 
+permissions:
+  contents: write
+
 on:
   schedule:
     # Runs daily at 08:30 UTC (~4:30 AM Eastern while EDT is in effect).
     - cron: '30 8 * * *'
   workflow_dispatch: {}
-
-  permissions:
-  contents: write
 
 jobs:
   build-and-generate:
