@@ -20,6 +20,16 @@ const cheerio = require('cheerio');
 const { DateTime } = require('luxon');
 const nlp = require('compromise');
 
+const { google } = require('googleapis');
+
+async function getGoogleAuth() {
+  const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}');
+  const auth = new google.auth.GoogleAuth({
+    credentials: serviceAccount,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+  return auth.getClient();
+}
 const parser = new RSSParser({ timeout: 15000 });
 
 const FEEDS = [
@@ -299,5 +309,10 @@ function escapeHtml(s) {
   const outFile = path.join(OUTPUT_DIR, `daily-email-${today}.html`);
   fs.writeFileSync(outFile, html, 'utf8');
   console.log(`Wrote ${outFile}`);
+    // Export picks and articles count for send-test-email.js
+  process.env.PICKS_JSON = JSON.stringify(picks);
+  process.env.ARTICLES_COUNT = freeArticles.slice(0, MAX_ARTICLES).length;
+  
+  console.log(`Exported ${picks.length} picks and ${freeArticles.slice(0, MAX_ARTICLES).length} articles`);  
   process.exit(0);
 })();
