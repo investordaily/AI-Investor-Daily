@@ -398,7 +398,11 @@ function buildEmailHtml(dateISO, picks, articles) {
           to,
           subject: `AI Investor Daily — ${DateTime.now().toLocaleString(DateTime.DATE_FULL)}`,
           html,
-        });
+          text: 'Please view this email in HTML format. If you cannot see it properly, open it in your email client or visit our website.',
+          headers: {
+            'Content-Type': 'text/html; charset=UTF-8'
+      }
+    });
         console.log(`Sent to ${to}`);
       } catch (err) {
         console.error(`Failed to send to ${to}:`, err.message || err);
