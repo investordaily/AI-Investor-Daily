@@ -1,15 +1,11 @@
 /**
  * AI Investor Daily — auto-updater (NER-enhanced)
- * - Extracts first 100 words from each free article
- * - Finds company names with compromise (light NER) and maps to tickers via Yahoo
- * - Ensures at least 3 small-cap picks
- * - Writes HTML to ./output/daily-email-YYYY-MM-DD.html
+ * Generates daily HTML and emails it to addresses listed in column A of the "Subscribers" sheet.
  *
  * Usage:
- * 1. npm install
- * 2. node index.js
- *
- * Notes: Respect rate limits and site terms. This is best-effort tooling.
+ *  - Set env vars: GOOGLE_SERVICE_ACCOUNT_JSON, SMTP_USER, SMTP_PASS
+ *  - npm install
+ *  - node index.js
  */
 
 const fs = require('fs');
@@ -19,21 +15,13 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { DateTime } = require('luxon');
 const nlp = require('compromise');
-
+const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
 
-async function getGoogleAuth() {
-  const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}');
-  const auth = new google.auth.GoogleAuth({
-    credentials: serviceAccount,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  return auth.getClient();
-}
 const parser = new RSSParser({ timeout: 15000 });
 
 const FEEDS = [
-  'https://www.reuters.com/technology/rss', 
+  'https://www.reuters.com/technology/rss',
   'https://techcrunch.com/feed/',
   'https://venturebeat.com/category/ai/feed/',
   'https://www.theverge.com/rss/index.xml',
@@ -49,12 +37,58 @@ const OUTPUT_DIR = path.join(__dirname, 'output');
 const SMALL_CAP_RANGE = { min: 300_000_000, max: 2_000_000_000 }; // USD
 const DESIRED_SMALL_CAP_COUNT = 3;
 
+// ---------------- Google auth + helper ----------------
+async function getGoogleAuth() {
+  const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}');
+  const auth = new google.auth.GoogleAuth({
+    credentials: serviceAccount,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  });
+  return auth.getClient();
+}
+
+async function getEmailList(spreadsheetId, range = 'Subscribers!A:A') {
+  const authClient = await getGoogleAuth();
+  const sheets = google.sheets({ version: 'v4', auth: authClient });
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const values = res.data.values || [];
+  // flatten and filter empties, trim whitespace
+  return values.flat().map(s => (s || '').toString().trim()).filter(Boolean);
+}
+
+// ---------------- Utility functions ----------------
 function matchesKeywords(text) {
   if (!text) return false;
   const t = text.toLowerCase();
   return KEYWORDS.some(k => t.includes(k.toLowerCase()));
 }
 
+function firstNWords(text, n) {
+  if (!text) return '';
+  const words = text.split(/\s+/).filter(Boolean);
+  let excerpt = words.slice(0, n).join(' ');
+  if (words.length > n) excerpt = excerpt + '…';
+  return excerpt;
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function formatMoney(num) {
+  if (!num || isNaN(num)) return 'N/A';
+  if (num >= 1e12) return (num/1e12).toFixed(2) + 'T';
+  if (num >= 1e9) return (num/1e9).toFixed(2) + 'B';
+  if (num >= 1e6) return (num/1e6).toFixed(2) + 'M';
+  return num.toString();
+}
+
+function shuffleArray(arr) {
+  return arr.sort(() => Math.random() - 0.5);
+}
+
+// ---------------- Fetching / parsing ----------------
 async function fetchRSSItems() {
   const items = [];
   for (const feed of FEEDS) {
@@ -89,7 +123,7 @@ async function isLikelyPaywalled(url) {
     return false;
   } catch (err) {
     console.warn(`Fetch failed for isLikelyPaywalled: ${err.message}`);
-    return true; // treat unreachable as paywalled to be safe
+    return true;
   }
 }
 
@@ -97,24 +131,36 @@ async function fetchArticleText(url) {
   try {
     const r = await axios.get(url, { timeout: 12000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     const $ = cheerio.load(r.data);
-    // heuristics: prefer article > p, otherwise all <p>
-    let paragraphs = $('article p').map((i, el) => $(el).text()).get();
-    if (paragraphs.length === 0) paragraphs = $('p').map((i, el) => $(el).text()).get();
-    const text = paragraphs.join('\n\n').replace(/\s+/g, ' ').trim();
-    return text;
+
+    // prioritized selectors
+    const articleSelectors = [
+      'article p',
+      '.article-content p',
+      '.post-content p',
+      '.entry-content p',
+      '.story-body p',
+      '.main-content p'
+    ];
+
+    let paragraphs = [];
+    for (const sel of articleSelectors) {
+      const found = $(sel).map((i, el) => $(el).text().trim()).get();
+      if (found.length > 3) { paragraphs = found; break; }
+    }
+
+    if (paragraphs.length === 0) {
+      paragraphs = $('p').map((i, el) => $(el).text().trim()).get();
+    }
+
+    const text = paragraphs.join(' ').replace(/\s+/g, ' ').trim();
+    return firstNWords(text, 100); // return first 100 words with ellipsis
   } catch (err) {
     console.warn(`Failed fetchArticleText ${url}: ${err.message}`);
     return '';
   }
 }
 
-function firstNWords(text, n) {
-  if (!text) return '';
-  const words = text.split(/\s+/).filter(Boolean);
-  return words.slice(0, n).join(' ');
-}
-
-// simple Yahoo Finance search
+// ---------------- Yahoo helpers ----------------
 async function yahooSearch(query) {
   try {
     const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=6&newsCount=0`;
@@ -139,43 +185,45 @@ async function fetchQuote(symbol) {
   return null;
 }
 
-function formatMoney(num) {
-  if (!num || isNaN(num)) return 'N/A';
-  if (num >= 1e12) return (num/1e12).toFixed(2) + 'T';
-  if (num >= 1e9) return (num/1e9).toFixed(2) + 'B';
-  if (num >= 1e6) return (num/1e6).toFixed(2) + 'M';
-  return num.toString();
-}
-
+// ---------------- Build email HTML ----------------
 function buildEmailHtml(dateISO, picks, articles) {
   const dateStr = DateTime.fromISO(dateISO).toLocaleString(DateTime.DATE_FULL);
   const logo = 'https://drive.google.com/uc?export=view&id=1MS2N2mFlmgffzZFQVDdD2AEsvXBup8I4';
   const brandColor = '#355E3B';
 
-  const picksHtml = picks.map((p, idx) => {
-    return `<div class="pick">
-      <h3>${idx+1}. ${p.name} ${p.ticker ? '('+p.ticker+')' : ''}</h3>
-      <p>${escapeHtml(p.reason || p.summary || '')}${p.marketCap ? `<br><strong>Market cap:</strong> ${formatMoney(p.marketCap)}` : ''}</p>
-      <a class="btn" href="${p.link || '#'}" style="background:#111;color:#fff;">View snapshot</a>
+  // Filter out funds/ETFs explicitly
+  const displayPicks = (picks || []).filter(p => !/(ETF|Fund|Trust|Index)/i.test(p.name || p.fullName)).slice(0,5);
+
+  // Ensure we always have 5 slots (fill with placeholders if needed)
+  while (displayPicks.length < 5) {
+    const idx = displayPicks.length + 1;
+    displayPicks.push({ name: `TBD ${idx}`, fullName: `TBD ${idx}`, ticker: '', marketCap: null, reason: 'Not enough data', link: '#' });
+  }
+
+  const picksHtml = displayPicks.map((p, idx) => {
+    const displayName = escapeHtml(p.fullName || p.name || p.ticker || `Pick ${idx+1}`);
+    const tickerText = p.ticker ? ` (${escapeHtml(p.ticker)})` : '';
+    const marketCapText = p.marketCap ? `<br><strong>Market cap:</strong> ${formatMoney(p.marketCap)}` : '';
+    const href = p.link || (p.ticker ? `https://finance.yahoo.com/quote/${encodeURIComponent(p.ticker)}` : '#');
+    return `<div class="pick" style="margin-bottom:16px;padding:14px;border-left:4px solid ${brandColor};background:#f9faf8;border-radius:8px;">
+      <h3 style="margin:0 0 6px 0;font-size:16px;color:#2b4b3a;"><a href="${href}" style="color:inherit;text-decoration:none;" target="_blank" rel="noopener noreferrer">${idx+1}. ${displayName}${tickerText}</a></h3>
+      <p style="margin:0 0 8px 0;color:#444;font-size:14px;">${escapeHtml(p.reason || p.summary || '')}${marketCapText}</p>
+      <a class="btn" href="${href}" style="display:inline-block;padding:8px 12px;background:#111;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;" target="_blank" rel="noopener noreferrer">View Chart & News</a>
     </div>`;
   }).join('\n');
 
-  const articlesHtml = articles.map(a => {
+  const articlesHtml = (articles || []).map(a => {
     const excerpt = escapeHtml(a.excerpt || '').replace(/\n/g,' ');
-    return `<li style="margin-bottom:12px;"><a href="${a.link}" class="article-link">${escapeHtml(a.title)}</a> — <em>${escapeHtml(a.source)}</em><div style="margin-top:6px; color:#444; font-size:14px;">${excerpt}</div></li>`;
+    return `<li style="margin-bottom:12px;line-height:1.6;text-align:left;"><a href="${a.link}" style="color:${brandColor};text-decoration:none;font-weight:600" target="_blank" rel="noopener noreferrer">${escapeHtml(a.title)}</a> — <em style="color:#666">${escapeHtml(a.source)}</em><div style="margin-top:6px;color:#555;font-size:13px;text-align:left;">${excerpt}</div></li>`;
   }).join('\n');
 
   return `<!doctype html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Investor Daily</title>
-<style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;background:#f6f7f9;color:#111}.wrapper{width:100%;max-width:680px;margin:0 auto;background:#fff;padding:20px;box-sizing:border-box}.header{display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid #ececec}.logo{width:160px;max-width:33%;height:auto}.pick h3{margin:0 0 6px;font-size:16px;color:#2b4b3a}.pick p{margin:0 0 8px;color:#444;font-size:14px}.btn{display:inline-block;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600}.cta{background:${brandColor};color:#fff}.article-link{color:${brandColor};text-decoration:none}.foot{font-size:12px;color:#888;padding-top:14px}</style></head><body><center style="padding:20px;"><div class="wrapper" role="article"><div class="header"><img src="${logo}" alt="AI Investor Daily logo" class="logo"/><div><h1>AI Investor Daily — Daily AI Brief</h1><div style="color:#666;font-size:13px;">${dateStr} • Quick, curated AI investing & news</div></div></div><div class="section" style="padding:14px 0;border-bottom:1px solid #f0f0f0"><p class="lead" style="margin:10px 0 18px;color:#555;font-size:14px">Top 5 AI investment picks for today (including small-cap opportunities) + 10 free, high-quality articles. Each article shows the first 100 words.</p><a href="#top-picks" class="btn cta" style="background:${brandColor};color:#fff">See Today's Top Picks</a><span style="margin-left:10px"><a href="#articles" style="color:${brandColor};text-decoration:none">Read 10 articles</a></span></div><div id="top-picks" class="section" style="padding:14px 0;border-bottom:1px solid #f0f0f0"><h2 style="font-size:18px;margin:0 0 10px;color:#233728">5 Top AI Investment Picks</h2>${picksHtml}<p style="margin-top:8px;font-size:13px;color:#666"><strong>Disclaimer:</strong> Informational only — not investment advice.</p></div><div id="articles" class="section" style="padding:14px 0;border-bottom:1px solid #f0f0f0"><h2 style="font-size:18px;margin:0 0 10px;color:#233728">10 Free Articles — AI Companies to Watch</h2><ol id="articles-list">${articlesHtml}</ol><a class="btn cta" href="#" style="background:${brandColor};color:#fff">Read all articles on web</a></div><div class="foot"><div style="padding-top:12px;border-top:1px solid #f0f0f0"><p style="margin:6px 0">You received this email because you subscribed to AI Investor Daily — curated AI investing insights.</p><p style="margin:6px 0">AI Investor Daily • 123 Market St • City, State</p></div></div></div></center></body></html>`;
+<style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;background:#f6f7f9;color:#111}.wrapper{width:100%;max-width:680px;margin:0 auto;background:#fff;padding:20px;box-sizing:border-box;text-align:left}.header{display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid #ececec}.logo{width:160px;max-width:33%;height:auto}.pick h3{margin:0 0 6px;font-size:16px;color:#2b4b3a}.pick p{margin:0 0 8px;color:#444;font-size:14px}.btn{display:inline-block;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600}.cta{background:${brandColor};color:#fff}.article-link{color:${brandColor};text-decoration:none}.foot{font-size:12px;color:#888;padding-top:14px}</style></head><body><center style="padding:20px;"><div class="wrapper" role="article"><div class="header"><img src="${logo}" alt="AI Investor Daily logo" class="logo"/><div><h1>AI Investor Daily — Daily AI Brief</h1><div style="color:#666;font-size:13px;">${dateStr} • Quick, curated AI investing & news</div></div></div><div class="section" style="padding:14px 0;border-bottom:1px solid #f0f0f0"><p class="lead" style="margin:10px 0 18px;color:#555;font-size:14px">Top 5 AI investment picks for today (including small-cap opportunities) + 10 free, high-quality articles. Each article shows the first 100 words.</p><a href="#top-picks" class="btn cta" style="background:${brandColor};color:#fff">See Today's Top Picks</a><span style="margin-left:10px"><a href="#articles" style="color:${brandColor};text-decoration:none">Read 10 articles</a></span></div><div id="top-picks" class="section" style="padding:14px 0;border-bottom:1px solid #f0f0f0"><h2 style="font-size:18px;margin:0 0 10px;color:#233728">5 Top AI Investment Picks</h2>${picksHtml}<p style="margin-top:8px;font-size:13px;color:#666"><strong>Disclaimer:</strong> Informational only — not investment advice.</p></div><div id="articles" class="section" style="padding:14px 0;border-bottom:1px solid #f0f0f0"><h2 style="font-size:18px;margin:0 0 10px;color:#233728">10 Free Articles — AI Companies to Watch</h2><ol id="articles-list">${articlesHtml}</ol><a class="btn cta" href="#" style="background:${brandColor};color:#fff">Read all articles on web</a></div><div class="foot"><div style="padding-top:12px;border-top:1px solid #f0f0f0"><p style="margin:6px 0">You received this email because you subscribed to AI Investor Daily — curated AI investing insights.</p><p style="margin:6px 0">AI Investor Daily • 123 Market St • City, State</p></div></div></div></center></body></html>`;
 }
 
-function escapeHtml(s) {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
+// ---------------- Main IIFE ----------------
 (async () => {
   console.log('Starting AI Investor Daily run');
   if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -195,9 +243,8 @@ function escapeHtml(s) {
     const paywalled = await isLikelyPaywalled(it.link);
     if (!paywalled) {
       // fetch text and excerpt
-      const text = await fetchArticleText(it.link);
-      const excerpt = firstNWords(text, 100); // first 100 words
-      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, text, excerpt });
+      const excerpt = await fetchArticleText(it.link); // first 100 words inside function
+      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, excerpt });
       console.log('Added free article:', it.title);
     } else {
       console.log('Skipped (likely paywalled):', it.title);
@@ -211,17 +258,16 @@ function escapeHtml(s) {
     for (const it of candidates) {
       if (freeArticles.length >= MAX_ARTICLES) break;
       if (freeArticles.find(a => a.link === it.link)) continue;
-      const text = await fetchArticleText(it.link);
-      const excerpt = firstNWords(text, 100);
-      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, text, excerpt });
+      const excerpt = await fetchArticleText(it.link);
+      freeArticles.push({ title: it.title, link: it.link, pubDate: it.pubDate, source: it.source, excerpt });
     }
   }
 
   // NER: extract organization names from all article texts using compromise
   const orgCounts = {};
   for (const art of freeArticles) {
-    if (!art.text) continue;
-    const doc = nlp(art.text);
+    if (!art.excerpt) continue;
+    const doc = nlp(art.excerpt);
     const orgs = doc.organizations().out('array');
     for (const o of orgs) {
       const clean = o.trim();
@@ -235,7 +281,7 @@ function escapeHtml(s) {
   const sortedOrgs = Object.entries(orgCounts).sort((a,b) => b[1]-a[1]).map(t => t[0]).slice(0, 50);
 
   // For each org, try Yahoo search to get tickers
-  const tickerMap = {}; // symbol -> {name,marketCap}
+  const tickerMap = {}; // symbol -> {name,marketCap,fullName,summary}
   for (const orgName of sortedOrgs) {
     await new Promise(r => setTimeout(r, 300));
     const results = await yahooSearch(orgName);
@@ -249,7 +295,8 @@ function escapeHtml(s) {
         if (quote) {
           tickerMap[symbol] = {
             symbol,
-            name: quote.shortName || quote.longName || r.shortname || orgName,
+            name: quote.shortName || r.shortname || orgName,
+            fullName: quote.longName || quote.shortName || r.shortname || orgName,
             marketCap: quote.marketCap || null,
             summary: quote.longBusinessSummary || '',
           };
@@ -270,7 +317,9 @@ function escapeHtml(s) {
   for (const s of anchorSymbols) {
     const f = tickers.find(t => t.symbol === s);
     if (f && picks.length < 5 && !picks.find(p=>p.ticker===f.symbol)) {
-      picks.push({ name: f.name, ticker: f.symbol, marketCap: f.marketCap, reason: 'Anchor large-cap AI/infra exposure', link: `https://finance.yahoo.com/quote/${f.symbol}` });
+      if (!/(ETF|Fund|Trust|Index)/i.test(f.fullName || f.name)) {
+        picks.push({ name: f.name, fullName: f.fullName, ticker: f.symbol, marketCap: f.marketCap, reason: 'Anchor large-cap AI/infra exposure', link: `https://finance.yahoo.com/quote/${f.symbol}` });
+      }
     }
   }
 
@@ -278,8 +327,8 @@ function escapeHtml(s) {
   const smalls = tickers.filter(t => t.marketCap && t.marketCap >= SMALL_CAP_RANGE.min && t.marketCap <= SMALL_CAP_RANGE.max)
                         .slice(0, DESIRED_SMALL_CAP_COUNT);
   for (const s of smalls) {
-    if (!picks.find(p => p.ticker === s.symbol)) {
-      picks.push({ name: s.name, ticker: s.symbol, marketCap: s.marketCap, reason: 'Small-cap AI opportunity (news mentions & NER)', link: `https://finance.yahoo.com/quote/${s.symbol}` });
+    if (!picks.find(p => p.ticker === s.symbol) && !/(ETF|Fund|Trust|Index)/i.test(s.fullName || s.name)) {
+      picks.push({ name: s.name, fullName: s.fullName, ticker: s.symbol, marketCap: s.marketCap, reason: 'Small-cap AI opportunity (news mentions & NER)', link: `https://finance.yahoo.com/quote/${s.symbol}` });
     }
     if (picks.length >= 5) break;
   }
@@ -288,18 +337,18 @@ function escapeHtml(s) {
   if (picks.length < 5) {
     for (const t of tickers) {
       if (picks.length >= 5) break;
-      if (!picks.find(p => p.ticker === t.symbol)) {
-        picks.push({ name: t.name, ticker: t.symbol, marketCap: t.marketCap, reason: 'AI-related mention & market cap', link: `https://finance.yahoo.com/quote/${t.symbol}` });
+      if (!picks.find(p => p.ticker === t.symbol) && !/(ETF|Fund|Trust|Index)/i.test(t.fullName || t.name)) {
+        picks.push({ name: t.name, fullName: t.fullName, ticker: t.symbol, marketCap: t.marketCap, reason: 'AI-related mention & market cap', link: `https://finance.yahoo.com/quote/${t.symbol}` });
       }
     }
   }
 
-  // Fallback if still short
-  const fallback = ['NVDA','MSFT','GOOGL','AMD','BOTZ'];
+  // Fallback if still short (avoid funds)
+  const fallback = ['NVDA','MSFT','GOOGL','AMD','AAPL'];
   for (const s of fallback) {
     if (picks.length >= 5) break;
     if (!picks.find(p=>p.ticker===s)) {
-      picks.push({ name: s, ticker: s, marketCap: null, reason: 'Fallback anchor', link: `https://finance.yahoo.com/quote/${s}` });
+      picks.push({ name: s, fullName: s, ticker: s, marketCap: null, reason: 'Fallback anchor', link: `https://finance.yahoo.com/quote/${s}` });
     }
   }
 
@@ -314,5 +363,54 @@ function escapeHtml(s) {
   process.env.ARTICLES_COUNT = freeArticles.slice(0, MAX_ARTICLES).length;
   
   console.log(`Exported ${picks.length} picks and ${freeArticles.slice(0, MAX_ARTICLES).length} articles`);  
+  
+
+  // ---------------- SEND EMAILS ----------------
+  try {
+    const SPREADSHEET_ID = '1wGOA7BD94fF2itKauDbvMD3aqw583PjL2pXp7mjsLiw';
+    const emails = await getEmailList(SPREADSHEET_ID, 'Subscribers!A:A');
+    console.log(`Found ${emails.length} recipients in sheet.`);
+
+    if (emails.length === 0) {
+      console.log('No recipients found, exiting.');
+      process.exit(0);
+    }
+
+    // create transporter using SMTP creds from env
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      throw new Error('SMTP_USER and SMTP_PASS must be set in environment.');
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    for (const to of emails) {
+      try {
+        await transporter.sendMail({
+          from: `AI Investor Daily <${process.env.SMTP_USER}>`,
+          to,
+          subject: `AI Investor Daily — ${DateTime.now().toLocaleString(DateTime.DATE_FULL)}`,
+          html,
+        });
+        console.log(`Sent to ${to}`);
+      } catch (err) {
+        console.error(`Failed to send to ${to}:`, err.message || err);
+      }
+      // small delay between sends to avoid throttling
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    console.log('Finished sending emails.');
+  } catch (err) {
+    console.error('Error while sending emails:', err);
+  }
+
   process.exit(0);
 })();
