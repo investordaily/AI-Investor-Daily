@@ -29,19 +29,6 @@ jobs:
 
       - name: Set email file path
         run: echo "EMAIL_FILE=output/daily-email-$(date -u +'%Y-%m-%d').html" >> $GITHUB_ENV
-      
-      - name: Send email
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.SMTP_USER }}
-          password: ${{ secrets.SMTP_PASS }}
-          subject: "AI Investor Daily"
-          to: jobhunterapplication@gmail.com
-          from: AI Investor Daily <${{ secrets.SMTP_USER }}>
-          content_type: text/html
-          body_file: output/daily-email-$(date -u +'%Y-%m-%d').html
 
       - name: Commit generated output (if changed)
         run: |
