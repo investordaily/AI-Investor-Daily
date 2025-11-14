@@ -1,0 +1,27 @@
+name: Test Email Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-email:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '20.x'
+      
+      - name: Install dependencies
+        run: npm install
+      
+      - name: Generate test email HTML
+        run: node index.js
+      
+      - name: Send test email
+        run: node send-test-email.js
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          TEST_EMAIL: jobhunterapplication@gmail.com
