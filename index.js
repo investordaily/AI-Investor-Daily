@@ -29,7 +29,7 @@ const FEEDS = [
   'https://arstechnica.com/feed/'
 ];
 
-const KEYWORDS = ['AI', 'artificial intelligence', 'machine learning', 'LLM', 'large language model', 'GPT', 'Claude', 'Copilot', 'chatbot', 'neural', 'deep learning', 'gpu', 'reinforcement learning', 'computer vision'. 'natural language processing', 'supervised learning'];
+const KEYWORDS = ['AI', 'artificial intelligence', 'machine learning', 'LLM', 'large language model', 'GPT', 'Claude', 'Copilot', 'chatbot', 'neural', 'deep learning', 'gpu', 'reinforcement learning', 'computer vision', 'natural language processing', 'supervised learning'];
 
 const MAX_ARTICLES = 10;
 const OUTPUT_DIR = path.join(__dirname, 'output');
