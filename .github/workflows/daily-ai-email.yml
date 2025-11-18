@@ -5,64 +5,38 @@ permissions:
 
 on:
   schedule:
-    # 4:30 AM PACIFIC TIME = 12:30 UTC
-    - cron: "30 12 * * *"
+    # Runs daily at 08:30 UTC (~4:30 AM Eastern while EDT is in effect).
+    - cron: '30 8 * * *'
   workflow_dispatch: {}
 
 jobs:
-  build-and-send:
+  build-and-generate:
     runs-on: ubuntu-latest
-    env:
-      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Run daily generator
+      - name: Run generator
         run: node index.js
 
-      - name: Read generated date file
-        id: datefile
-        run: |
-          FILE=$(ls output/daily-email-*.html | head -n 1)
-          echo "HTML_FILE=$FILE" >> $GITHUB_ENV
-
-      - name: Read recipients
-        id: recipients
-        run: |
-          RECIPS=$(cat output/recipients.txt)
-          echo "RECIP_LIST=$RECIPS" >> $GITHUB_ENV
-
-      - name: Send newsletter email
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.SMTP_USER }}
-          password: ${{ secrets.SMTP_PASS }}
-          subject: "AI Investor Daily Newsletter"
-          from: AI Investor Daily <${{ secrets.SMTP_USER }}>
-          to: ${{ env.RECIP_LIST }}
-          content_type: text/html
-          body_file: ${{ env.HTML_FILE }}
+      - name: Set email file path
+        run: echo "EMAIL_FILE=output/daily-email-$(date -u +'%Y-%m-%d').html" >> $GITHUB_ENV
 
       - name: Commit generated output (if changed)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add output || true
-
           if ! git diff --cached --quiet; then
-            git commit -m "Daily AI email $(date -u +'%Y-%m-%d')"
+            git commit -m "Daily AI email: $(date -u +'%Y-%m-%d')"
             git push origin HEAD
           else
             echo "No changes to commit"
