@@ -20,22 +20,61 @@ const { google } = require('googleapis');
 
 const parser = new RSSParser({ timeout: 15000 });
 
+// SOLUTION 1: Expanded feeds to include financial/investment news
 const FEEDS = [
   'https://www.reuters.com/technology/rss',
   'https://techcrunch.com/feed/',
   'https://venturebeat.com/category/ai/feed/',
   'https://www.theverge.com/rss/index.xml',
   'https://www.wired.com/feed/rss',
-  'https://arstechnica.com/feed/'
+  'https://arstechnica.com/feed/',
+  'https://www.cnbc.com/id/19854910/device/rss/rss.html', // CNBC Tech
+  'https://feeds.bloomberg.com/technology/news.rss', // Bloomberg Tech
+  'https://www.investing.com/rss/news_301.rss', // Investing.com AI/Tech
+  'https://seekingalpha.com/feed.xml', // Seeking Alpha
+  'https://www.marketwatch.com/rss/realtimeheadlines', // MarketWatch
 ];
 
 const KEYWORDS = ['AI', 'artificial intelligence', 'machine learning', 'LLM', 'large language model', 'GPT', 'Claude', 'Copilot', 'chatbot', 'neural', 'deep learning', 'gpu', 'reinforcement learning', 'computer vision', 'natural language processing', 'supervised learning'];
+
+// SOLUTION 3: Investment-focused keywords
+const INVESTMENT_KEYWORDS = [
+  'stock', 'shares', 'market cap', 'ipo', 'earnings', 'revenue', 
+  'valuation', 'investment', 'investor', 'funding round', 'raises',
+  'nvidia', 'microsoft', 'google', 'meta', 'amazon', 'apple',
+  'chip maker', 'semiconductor', 'ai chip', 'data center', 'quarterly results',
+  'trading', 'analyst', 'price target', 'buy rating', 'sell rating'
+];
 
 const MAX_ARTICLES = 10;
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
 const SMALL_CAP_RANGE = { min: 300_000_000, max: 2_000_000_000 }; // USD
 const DESIRED_SMALL_CAP_COUNT = 3;
+
+// SOLUTION 2: Known AI companies to always check
+const KNOWN_AI_COMPANIES = [
+  { name: 'NVIDIA', ticker: 'NVDA' },
+  { name: 'Microsoft', ticker: 'MSFT' },
+  { name: 'Alphabet', ticker: 'GOOGL' },
+  { name: 'AMD', ticker: 'AMD' },
+  { name: 'Intel', ticker: 'INTC' },
+  { name: 'Qualcomm', ticker: 'QCOM' },
+  { name: 'Tesla', ticker: 'TSLA' },
+  { name: 'Meta', ticker: 'META' },
+  { name: 'Amazon', ticker: 'AMZN' },
+  { name: 'Apple', ticker: 'AAPL' },
+  { name: 'Palantir', ticker: 'PLTR' },
+  { name: 'C3.ai', ticker: 'AI' },
+  { name: 'UiPath', ticker: 'PATH' },
+  { name: 'Snowflake', ticker: 'SNOW' },
+  { name: 'CrowdStrike', ticker: 'CRWD' },
+  { name: 'ServiceNow', ticker: 'NOW' },
+  { name: 'Oracle', ticker: 'ORCL' },
+  { name: 'Salesforce', ticker: 'CRM' },
+  { name: 'IBM', ticker: 'IBM' },
+  { name: 'Broadcom', ticker: 'AVGO' },
+];
 
 // ---------------- Google auth + helper ----------------
 async function getGoogleAuth() {
@@ -61,6 +100,13 @@ function matchesKeywords(text) {
   if (!text) return false;
   const t = text.toLowerCase();
   return KEYWORDS.some(k => t.includes(k.toLowerCase()));
+}
+
+// SOLUTION 3: Check for investment keywords
+function matchesInvestmentKeywords(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return INVESTMENT_KEYWORDS.some(k => t.includes(k.toLowerCase()));
 }
 
 function firstNWords(text, n) {
@@ -234,8 +280,12 @@ function buildEmailHtml(dateISO, picks, articles) {
   const feedItems = await fetchRSSItems();
   console.log(`Fetched ${feedItems.length} feed items.`);
 
-  // Filter candidates by keyword
-  const candidates = feedItems.filter(it => matchesKeywords(it.title) || matchesKeywords(it.source));
+  // SOLUTION 3: Filter candidates by AI keywords AND investment keywords
+  const candidates = feedItems.filter(it => {
+    const hasAIKeyword = matchesKeywords(it.title) || matchesKeywords(it.source);
+    const hasInvestmentKeyword = matchesInvestmentKeywords(it.title);
+    return hasAIKeyword || hasInvestmentKeyword; // Accept if either condition is met
+  });
   console.log(`Keyword-filtered to ${candidates.length} items.`);
 
   const freeArticles = [];
@@ -318,6 +368,28 @@ function buildEmailHtml(dateISO, picks, articles) {
     }
     // stop early if we have a reasonable pool
     if (Object.keys(tickerMap).length >= 40) break;
+  }
+
+  // SOLUTION 2: Add known AI companies to ticker map
+  console.log('\n=== ADDING KNOWN AI TICKERS ===');
+  for (const company of KNOWN_AI_COMPANIES) {
+    if (tickerMap[company.ticker]) {
+      console.log(`  Already have ${company.ticker}`);
+      continue;
+    }
+    
+    await new Promise(r => setTimeout(r, 250));
+    const quote = await fetchQuote(company.ticker);
+    if (quote) {
+      console.log(`  ✓ Added known AI stock ${company.ticker}: ${quote.shortName}`);
+      tickerMap[company.ticker] = {
+        symbol: company.ticker,
+        name: quote.shortName || company.name,
+        fullName: quote.longName || quote.shortName || company.name,
+        marketCap: quote.marketCap || null,
+        summary: quote.longBusinessSummary || '',
+      };
+    }
   }
 
   // ADD DEBUG: TICKER MAP
