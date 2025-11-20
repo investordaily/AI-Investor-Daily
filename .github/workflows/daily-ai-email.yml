@@ -1,35 +1,31 @@
 name: Daily AI Email Generator
-
 permissions:
   contents: write
-
 on:
   schedule:
     # Runs daily at 08:30 UTC (~4:30 AM Eastern while EDT is in effect).
     - cron: '30 8 * * *'
   workflow_dispatch: {}
-
 jobs:
   build-and-generate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install dependencies
         run: npm install
-
       - name: Run generator
         run: node index.js
-
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
       - name: Set email file path
         run: echo "EMAIL_FILE=output/daily-email-$(date -u +'%Y-%m-%d').html" >> $GITHUB_ENV
-
       - name: Commit generated output (if changed)
         run: |
           git config user.name "github-actions[bot]"
