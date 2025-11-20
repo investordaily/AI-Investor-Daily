@@ -20,6 +20,7 @@ const { google } = require('googleapis');
 
 const parser = new RSSParser({ timeout: 15000 });
 
+// SOLUTION 1: Expanded feeds to include financial/investment news
 const FEEDS = [
   'https://www.reuters.com/technology/rss',
   'https://techcrunch.com/feed/',
@@ -31,19 +32,49 @@ const FEEDS = [
   'https://feeds.bloomberg.com/technology/news.rss', // Bloomberg Tech
   'https://www.investing.com/rss/news_301.rss', // Investing.com AI/Tech
   'https://seekingalpha.com/feed.xml', // Seeking Alpha
-  'https://www.marketwatch.com/rss/realtimeheadlines',
+  'https://www.marketwatch.com/rss/realtimeheadlines', // MarketWatch
 ];
 
-const KEYWORDS = ['stock', 'shares', 'market cap', 'ipo', 'earnings', 'revenue', 
+const KEYWORDS = ['AI', 'artificial intelligence', 'machine learning', 'LLM', 'large language model', 'GPT', 'Claude', 'Copilot', 'chatbot', 'neural', 'deep learning', 'gpu', 'reinforcement learning', 'computer vision', 'natural language processing', 'supervised learning'];
+
+// SOLUTION 3: Investment-focused keywords
+const INVESTMENT_KEYWORDS = [
+  'stock', 'shares', 'market cap', 'ipo', 'earnings', 'revenue', 
   'valuation', 'investment', 'investor', 'funding round', 'raises',
   'nvidia', 'microsoft', 'google', 'meta', 'amazon', 'apple',
-  'chip maker', 'semiconductor', 'ai chip', 'data center', 'AI', 'artificial intelligence', 'machine learning', 'LLM', 'large language model', 'GPT', 'Claude', 'Copilot', 'chatbot', 'neural', 'deep learning', 'gpu', 'reinforcement learning', 'computer vision', 'natural language processing', 'supervised learning'];
+  'chip maker', 'semiconductor', 'ai chip', 'data center', 'quarterly results',
+  'trading', 'analyst', 'price target', 'buy rating', 'sell rating'
+];
 
 const MAX_ARTICLES = 10;
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
 const SMALL_CAP_RANGE = { min: 300_000_000, max: 2_000_000_000 }; // USD
 const DESIRED_SMALL_CAP_COUNT = 3;
+
+// SOLUTION 2: Known AI companies to always check
+const KNOWN_AI_COMPANIES = [
+  { name: 'NVIDIA', ticker: 'NVDA' },
+  { name: 'Microsoft', ticker: 'MSFT' },
+  { name: 'Alphabet', ticker: 'GOOGL' },
+  { name: 'AMD', ticker: 'AMD' },
+  { name: 'Intel', ticker: 'INTC' },
+  { name: 'Qualcomm', ticker: 'QCOM' },
+  { name: 'Tesla', ticker: 'TSLA' },
+  { name: 'Meta', ticker: 'META' },
+  { name: 'Amazon', ticker: 'AMZN' },
+  { name: 'Apple', ticker: 'AAPL' },
+  { name: 'Palantir', ticker: 'PLTR' },
+  { name: 'C3.ai', ticker: 'AI' },
+  { name: 'UiPath', ticker: 'PATH' },
+  { name: 'Snowflake', ticker: 'SNOW' },
+  { name: 'CrowdStrike', ticker: 'CRWD' },
+  { name: 'ServiceNow', ticker: 'NOW' },
+  { name: 'Oracle', ticker: 'ORCL' },
+  { name: 'Salesforce', ticker: 'CRM' },
+  { name: 'IBM', ticker: 'IBM' },
+  { name: 'Broadcom', ticker: 'AVGO' },
+];
 
 // ---------------- Google auth + helper ----------------
 async function getGoogleAuth() {
@@ -69,6 +100,13 @@ function matchesKeywords(text) {
   if (!text) return false;
   const t = text.toLowerCase();
   return KEYWORDS.some(k => t.includes(k.toLowerCase()));
+}
+
+// SOLUTION 3: Check for investment keywords
+function matchesInvestmentKeywords(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return INVESTMENT_KEYWORDS.some(k => t.includes(k.toLowerCase()));
 }
 
 function firstNWords(text, n) {
@@ -216,7 +254,7 @@ function buildEmailHtml(dateISO, picks, articles) {
     
     return `<div class="pick" style="margin-bottom:16px;padding:14px;border-left:4px solid ${brandColor};background:#f9faf8;border-radius:8px;">
       <h3 style="margin:0 0 6px 0;font-size:16px;color:#2b4b3a;">
-        ${idx+1}. <a href="${href}" target="_blank">${displayName}${tickerText}</a>
+        ${idx+1}. <a href="${href}" target="_blank" style="color:#2b4b3a;text-decoration:underline;">${displayName}${tickerText}</a>
       </h3>
       <p style="margin:0 0 8px 0;color:#444;font-size:14px;">${escapeHtml(p.reason || p.summary || '')}${marketCapText}</p>
       <a href="${href}" target="_blank" style="display:inline-block;padding:8px 12px;background:#111;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;">View Chart &amp; News</a>
@@ -242,8 +280,12 @@ function buildEmailHtml(dateISO, picks, articles) {
   const feedItems = await fetchRSSItems();
   console.log(`Fetched ${feedItems.length} feed items.`);
 
-  // Filter candidates by keyword
-  const candidates = feedItems.filter(it => matchesKeywords(it.title) || matchesKeywords(it.source));
+  // SOLUTION 3: Filter candidates by AI keywords AND investment keywords
+  const candidates = feedItems.filter(it => {
+    const hasAIKeyword = matchesKeywords(it.title) || matchesKeywords(it.source);
+    const hasInvestmentKeyword = matchesInvestmentKeywords(it.title);
+    return hasAIKeyword || hasInvestmentKeyword; // Accept if either condition is met
+  });
   console.log(`Keyword-filtered to ${candidates.length} items.`);
 
   const freeArticles = [];
@@ -274,6 +316,9 @@ function buildEmailHtml(dateISO, picks, articles) {
     }
   }
 
+  console.log(`\nTotal free articles collected: ${freeArticles.length}`);
+  console.log(`Articles with excerpts: ${freeArticles.filter(a => a.excerpt && a.excerpt.length > 0).length}`);
+
   // NER: extract organization names from all article texts using compromise
   const orgCounts = {};
   for (const art of freeArticles) {
@@ -284,45 +329,14 @@ function buildEmailHtml(dateISO, picks, articles) {
       const clean = o.trim();
       if (clean.length > 2) {
         orgCounts[clean] = (orgCounts[clean] || 0) + 1;
-        // After the NER extraction, ADD THIS:
-console.log('\n=== ADDING KNOWN AI TICKERS ===');
-
-// Known AI companies to always check
-const knownAICompanies = [
-  { name: 'NVIDIA', ticker: 'NVDA' },
-  { name: 'Microsoft', ticker: 'MSFT' },
-  { name: 'Alphabet', ticker: 'GOOGL' },
-  { name: 'AMD', ticker: 'AMD' },
-  { name: 'Intel', ticker: 'INTC' },
-  { name: 'Qualcomm', ticker: 'QCOM' },
-  { name: 'Tesla', ticker: 'TSLA' },
-  { name: 'Meta', ticker: 'META' },
-  { name: 'Amazon', ticker: 'AMZN' },
-  { name: 'Apple', ticker: 'AAPL' },
-  { name: 'Palantir', ticker: 'PLTR' },
-  { name: 'C3.ai', ticker: 'AI' },
-  { name: 'UiPath', ticker: 'PATH' },
-  { name: 'Snowflake', ticker: 'SNOW' },
-];
-
-// Add these to the ticker lookup process
-for (const company of knownAICompanies) {
-  if (Object.keys(tickerMap).length >= 40) break;
-  if (tickerMap[company.ticker]) continue;
-  
-  await new Promise(r => setTimeout(r, 250));
-  const quote = await fetchQuote(company.ticker);
-  if (quote) {
-    console.log(`  ✓ Added known AI stock ${company.ticker}: ${quote.shortName}`);
-    tickerMap[company.ticker] = {
-      symbol: company.ticker,
-      name: quote.shortName || company.name,
-      fullName: quote.longName || quote.shortName || company.name,
-      marketCap: quote.marketCap || null,
-      summary: quote.longBusinessSummary || '',
-    };
+      }
+    }
   }
-}
+
+  // ADD DEBUG: NER EXTRACTION
+  console.log('\n=== NER EXTRACTION ===');
+  console.log(`Total organizations found: ${Object.keys(orgCounts).length}`);
+  console.log('Top 10 organizations:', Object.entries(orgCounts).sort((a,b) => b[1]-a[1]).slice(0,10));
 
   // Create a prioritized list of candidate company names
   const sortedOrgs = Object.entries(orgCounts).sort((a,b) => b[1]-a[1]).map(t => t[0]).slice(0, 50);
@@ -333,6 +347,7 @@ for (const company of knownAICompanies) {
     await new Promise(r => setTimeout(r, 300));
     const results = await yahooSearch(orgName);
     if (results && results.length) {
+      console.log(`Yahoo search for "${orgName}": found ${results.length} results`);
       for (const r of results) {
         if (!r.symbol) continue;
         const symbol = r.symbol.toUpperCase();
@@ -340,6 +355,7 @@ for (const company of knownAICompanies) {
         await new Promise(r2 => setTimeout(r2, 250));
         const quote = await fetchQuote(symbol);
         if (quote) {
+          console.log(`  ✓ Added ${symbol}: ${quote.shortName}`);
           tickerMap[symbol] = {
             symbol,
             name: quote.shortName || r.shortname || orgName,
@@ -354,9 +370,40 @@ for (const company of knownAICompanies) {
     if (Object.keys(tickerMap).length >= 40) break;
   }
 
+  // SOLUTION 2: Add known AI companies to ticker map
+  console.log('\n=== ADDING KNOWN AI TICKERS ===');
+  for (const company of KNOWN_AI_COMPANIES) {
+    if (tickerMap[company.ticker]) {
+      console.log(`  Already have ${company.ticker}`);
+      continue;
+    }
+    
+    await new Promise(r => setTimeout(r, 250));
+    const quote = await fetchQuote(company.ticker);
+    if (quote) {
+      console.log(`  ✓ Added known AI stock ${company.ticker}: ${quote.shortName}`);
+      tickerMap[company.ticker] = {
+        symbol: company.ticker,
+        name: quote.shortName || company.name,
+        fullName: quote.longName || quote.shortName || company.name,
+        marketCap: quote.marketCap || null,
+        summary: quote.longBusinessSummary || '',
+      };
+    }
+  }
+
+  // ADD DEBUG: TICKER MAP
+  console.log('\n=== TICKER MAP ===');
+  console.log(`Total tickers found: ${Object.keys(tickerMap).length}`);
+  console.log('Tickers:', Object.keys(tickerMap).slice(0, 20));
+
   // Convert to array
   const tickers = Object.values(tickerMap);
   tickers.sort((a,b) => (b.marketCap||0) - (a.marketCap||0));
+
+  // ADD DEBUG: PICKS GENERATION
+  console.log('\n=== PICKS GENERATION ===');
+  console.log(`Total tickers to choose from: ${tickers.length}`);
 
   // Build picks: prefer anchors if found, then ensure small-cap picks
   const picks = [];
@@ -369,16 +416,19 @@ for (const company of knownAICompanies) {
       }
     }
   }
+  console.log(`After anchors: ${picks.length} picks`);
 
   // Ensure at least DESIRED_SMALL_CAP_COUNT small-caps
   const smalls = tickers.filter(t => t.marketCap && t.marketCap >= SMALL_CAP_RANGE.min && t.marketCap <= SMALL_CAP_RANGE.max)
                         .slice(0, DESIRED_SMALL_CAP_COUNT);
+  console.log(`Small-caps found: ${smalls.length}`);
   for (const s of smalls) {
     if (!picks.find(p => p.ticker === s.symbol) && !/(ETF|Fund|Trust|Index)/i.test(s.fullName || s.name)) {
       picks.push({ name: s.name, fullName: s.fullName, ticker: s.symbol, marketCap: s.marketCap, reason: 'Small-cap AI opportunity (news mentions & NER)', link: `https://finance.yahoo.com/quote/${s.symbol}` });
     }
     if (picks.length >= 5) break;
   }
+  console.log(`After small-caps: ${picks.length} picks`);
 
   // Fill remaining picks by top market cap tickers
   if (picks.length < 5) {
@@ -389,6 +439,7 @@ for (const company of knownAICompanies) {
       }
     }
   }
+  console.log(`After top market cap: ${picks.length} picks`);
 
   // Fallback if still short (avoid funds)
   const fallback = ['NVDA','MSFT','GOOGL','AMD','AAPL'];
@@ -399,65 +450,71 @@ for (const company of knownAICompanies) {
     }
   }
 
+  // ADD DEBUG: FINAL PICKS
+  console.log('\n=== FINAL PICKS ===');
+  picks.forEach((p, i) => {
+    console.log(`${i+1}. ${p.ticker}: ${p.fullName} - ${p.reason}`);
+  });
+
   // Build HTML and write
   const today = DateTime.now().toISODate();
   const html = buildEmailHtml(today, picks, freeArticles.slice(0, MAX_ARTICLES).map(a => ({ title: a.title, link: a.link, source: a.source, excerpt: a.excerpt })));
   const outFile = path.join(OUTPUT_DIR, `daily-email-${today}.html`);
   fs.writeFileSync(outFile, html, 'utf8');
   console.log(`Wrote ${outFile}`);
-    // Export picks and articles count for send-test-email.js
+  
+  // Export picks and articles count for send-test-email.js
   process.env.PICKS_JSON = JSON.stringify(picks);
   process.env.ARTICLES_COUNT = freeArticles.slice(0, MAX_ARTICLES).length;
   
   console.log(`Exported ${picks.length} picks and ${freeArticles.slice(0, MAX_ARTICLES).length} articles`);  
-  
 
   // ---------------- SEND EMAILS ----------------
-try {
-  const SPREADSHEET_ID = '1wGOA7BD94fF2itKauDbvMD3aqw583PjL2pXp7mjsLiw';
-  const emails = await getEmailList(SPREADSHEET_ID, 'Subscribers!A:A');
-  console.log(`Found ${emails.length} recipients in sheet.`);
+  try {
+    const SPREADSHEET_ID = '1wGOA7BD94fF2itKauDbvMD3aqw583PjL2pXp7mjsLiw';
+    const emails = await getEmailList(SPREADSHEET_ID, 'Subscribers!A:A');
+    console.log(`Found ${emails.length} recipients in sheet.`);
 
-  if (emails.length === 0) {
-    console.log('No recipients found, exiting.');
-    process.exit(0);
-  }
-
-  // create transporter using SMTP creds from env
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    throw new Error('SMTP_USER and SMTP_PASS must be set in environment.');
-  }
-
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  for (const to of emails) {
-    try {
-      await transporter.sendMail({
-        from: `AI Investor Daily <${process.env.SMTP_USER}>`,
-        to,
-        subject: `AI Investor Daily — ${DateTime.now().toLocaleString(DateTime.DATE_FULL)}`,
-        html,
-      });
-      console.log(`Sent to ${to}`);
-    } catch (err) {
-      console.error(`Failed to send to ${to}:`, err.message || err);
+    if (emails.length === 0) {
+      console.log('No recipients found, exiting.');
+      process.exit(0);
     }
-    // small delay between sends to avoid throttling
-    await new Promise(r => setTimeout(r, 350));
+
+    // create transporter using SMTP creds from env
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      throw new Error('SMTP_USER and SMTP_PASS must be set in environment.');
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    for (const to of emails) {
+      try {
+        await transporter.sendMail({
+          from: `AI Investor Daily <${process.env.SMTP_USER}>`,
+          to,
+          subject: `AI Investor Daily — ${DateTime.now().toLocaleString(DateTime.DATE_FULL)}`,
+          html,
+        });
+        console.log(`Sent to ${to}`);
+      } catch (err) {
+        console.error(`Failed to send to ${to}:`, err.message || err);
+      }
+      // small delay between sends to avoid throttling
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    console.log('Finished sending emails.');
+  } catch (err) {
+    console.error('Error while sending emails:', err);
   }
 
-  console.log('Finished sending emails.');
-} catch (err) {
-  console.error('Error while sending emails:', err);
-}
-
-process.exit(0);
+  process.exit(0);
 })();
