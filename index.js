@@ -204,11 +204,14 @@ function buildEmailHtml(dateISO, picks, articles) {
     const displayName = escapeHtml(p.fullName || p.name || p.ticker || `Pick ${idx+1}`);
     const tickerText = p.ticker ? ` (${escapeHtml(p.ticker)})` : '';
     const marketCapText = p.marketCap ? `<br><strong>Market cap:</strong> ${formatMoney(p.marketCap)}` : '';
-    const href = p.link || (p.ticker ? `https://finance.yahoo.com/quote/${encodeURIComponent(p.ticker)}` : '#');
+    const href = p.link || (p.ticker ? `https://finance.yahoo.com/quote/${encodeURIComponent(p.ticker)}` : 'https://finance.yahoo.com');
+    
     return `<div class="pick" style="margin-bottom:16px;padding:14px;border-left:4px solid ${brandColor};background:#f9faf8;border-radius:8px;">
-      <h3 style="margin:0 0 6px 0;font-size:16px;color:#2b4b3a;"><a href="${href}" style="color:inherit;text-decoration:none;" target="_blank" rel="noopener noreferrer">${idx+1}. ${displayName}${tickerText}</a></h3>
+      <h3 style="margin:0 0 6px 0;font-size:16px;color:#2b4b3a;">
+        ${idx+1}. <a href="${href}" target="_blank">${displayName}${tickerText}</a>
+      </h3>
       <p style="margin:0 0 8px 0;color:#444;font-size:14px;">${escapeHtml(p.reason || p.summary || '')}${marketCapText}</p>
-      <a class="btn" href="${href}" style="display:inline-block;padding:8px 12px;background:#111;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;" target="_blank" rel="noopener noreferrer">View Chart & News</a>
+      <a href="${href}" target="_blank" style="display:inline-block;padding:8px 12px;background:#111;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;">View Chart &amp; News</a>
     </div>`;
   }).join('\n');
 
@@ -398,11 +401,7 @@ function buildEmailHtml(dateISO, picks, articles) {
           to,
           subject: `AI Investor Daily — ${DateTime.now().toLocaleString(DateTime.DATE_FULL)}`,
           html,
-          text: 'Please view this email in HTML format. If you cannot see it properly, open it in your email client or visit our website.',
-          headers: {
-            'Content-Type': 'text/html; charset=UTF-8'
-      }
-    });
+          
         console.log(`Sent to ${to}`);
       } catch (err) {
         console.error(`Failed to send to ${to}:`, err.message || err);
