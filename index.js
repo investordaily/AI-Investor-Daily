@@ -369,51 +369,51 @@ function buildEmailHtml(dateISO, picks, articles) {
   
 
   // ---------------- SEND EMAILS ----------------
-  try {
-    const SPREADSHEET_ID = '1wGOA7BD94fF2itKauDbvMD3aqw583PjL2pXp7mjsLiw';
-    const emails = await getEmailList(SPREADSHEET_ID, 'Subscribers!A:A');
-    console.log(`Found ${emails.length} recipients in sheet.`);
+try {
+  const SPREADSHEET_ID = '1wGOA7BD94fF2itKauDbvMD3aqw583PjL2pXp7mjsLiw';
+  const emails = await getEmailList(SPREADSHEET_ID, 'Subscribers!A:A');
+  console.log(`Found ${emails.length} recipients in sheet.`);
 
-    if (emails.length === 0) {
-      console.log('No recipients found, exiting.');
-      process.exit(0);
-    }
-
-    // create transporter using SMTP creds from env
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      throw new Error('SMTP_USER and SMTP_PASS must be set in environment.');
-    }
-
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
-
-    for (const to of emails) {
-      try {
-        await transporter.sendMail({
-          from: `AI Investor Daily <${process.env.SMTP_USER}>`,
-          to,
-          subject: `AI Investor Daily — ${DateTime.now().toLocaleString(DateTime.DATE_FULL)}`,
-          html,
-          
-        console.log(`Sent to ${to}`);
-      } catch (err) {
-        console.error(`Failed to send to ${to}:`, err.message || err);
-      }
-      // small delay between sends to avoid throttling
-      await new Promise(r => setTimeout(r, 350));
-    }
-
-    console.log('Finished sending emails.');
-  } catch (err) {
-    console.error('Error while sending emails:', err);
+  if (emails.length === 0) {
+    console.log('No recipients found, exiting.');
+    process.exit(0);
   }
 
-  process.exit(0);
+  // create transporter using SMTP creds from env
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    throw new Error('SMTP_USER and SMTP_PASS must be set in environment.');
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  for (const to of emails) {
+    try {
+      await transporter.sendMail({
+        from: `AI Investor Daily <${process.env.SMTP_USER}>`,
+        to,
+        subject: `AI Investor Daily — ${DateTime.now().toLocaleString(DateTime.DATE_FULL)}`,
+        html,
+      });
+      console.log(`Sent to ${to}`);
+    } catch (err) {
+      console.error(`Failed to send to ${to}:`, err.message || err);
+    }
+    // small delay between sends to avoid throttling
+    await new Promise(r => setTimeout(r, 350));
+  }
+
+  console.log('Finished sending emails.');
+} catch (err) {
+  console.error('Error while sending emails:', err);
+}
+
+process.exit(0);
 })();
