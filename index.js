@@ -188,7 +188,7 @@ async function fetchQuote(symbol) {
 // ---------------- Build email HTML ----------------
 function buildEmailHtml(dateISO, picks, articles) {
   const dateStr = DateTime.fromISO(dateISO).toLocaleString(DateTime.DATE_FULL);
-  const logo = 'https://drive.google.com/uc?export=view&id=1MS2N2mFlmgffzZFQVDdD2AEsvXBup8I4';
+  const logo = 'https://drive.google.com/uc?export=view&id=1YZ-Po3PWd2T3HW-Xl71DderctGs3LVYm';
   const brandColor = '#355E3B';
 
   // Filter out funds/ETFs explicitly
@@ -197,7 +197,7 @@ function buildEmailHtml(dateISO, picks, articles) {
   // Ensure we always have 5 slots (fill with placeholders if needed)
   while (displayPicks.length < 5) {
     const idx = displayPicks.length + 1;
-    displayPicks.push({ name: `TBD ${idx}`, fullName: `TBD ${idx}`, ticker: '', marketCap: null, reason: 'Not enough data', link: '#' });
+    displayPicks.push({ name: `TBD ${idx}`, fullName: `TBD ${idx}`, ticker: '', marketCap: null, reason: 'Not enough data', link: `#` });
   }
 
   const picksHtml = displayPicks.map((p, idx) => {
