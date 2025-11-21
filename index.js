@@ -446,7 +446,7 @@ function generateNewsletterHTML(relevantArticles, topPicks) {
 
     {/* --- Other Relevant Articles --- */}
     {relevantArticles.length > 0 && (
-      html += `<h2>📰 Latest AI & Tech News</h2>`
+      html += `<h2>Latest AI & Tech News</h2>`
     )}
     {relevantArticles.slice(0, 8).map(article => {
       const formattedDate = article.pubDate ? DateTime.fromJSDate(article.pubDate).toFormat('LLL d, yyyy') : '';
