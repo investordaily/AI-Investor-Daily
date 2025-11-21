@@ -55,7 +55,7 @@ async function fetchRSSItems() {
           items.push({
             title: it.title || '',
             link: it.link || it.guid || '',
-            pubDate: it.pubDate ? new Date(it.pubDate) : new Date(), // Fallback to now
+            pubDate: it.pubDate ? new Date(it.pubDate) : new Date(), // Fallback to now if pubDate is null or invalid
             source: f.title || feed,
             contentSnippet: it.contentSnippet || ''
           });
@@ -79,7 +79,7 @@ async function isLikelyPaywalled(url) {
     });
     const $ = cheerio.load(r.data);
     const text = $(
-      'article p, p, .post-content, .entry-content, .article-body'
+      'article p, .post-content p, .entry-content p, .article-body p, p'
     ).map((i, el) => $(el).text()).get().join('\n\n').slice(0, 4000).toLowerCase();
 
     const paywallHints = [
@@ -117,8 +117,8 @@ async function fetchArticleText(url) {
     const $ = cheerio.load(r.data);
     // Try common article content selectors
     let paragraphs = $('article p, .post-content p, .entry-content p, .article-body p').map((i, el) => $(el).text()).get();
-    if (paragraphs.length < 3) {
-      paragraphs = $('p').map((i, el) => $(el).text()).get(); // Fallback to all paragraphs
+    if (paragraphs.length < 3) { // If too few paragraphs, fall back to all <p> tags
+      paragraphs = $('p').map((i, el) => $(el).text()).get();
     }
     const text = paragraphs.join('\n\n').replace(/\s+/g, ' ').trim();
     // Simple cleaning: remove excessive newlines, trim whitespace
@@ -142,7 +142,7 @@ async function yahooSearch(query) {
     const r = await axios.get(url, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (r.data && r.data.quotes) return r.data.quotes;
   } catch (err) {
-    console.warn(`Yahoo search failed for ${query}: ${err.message}`);
+    // console.warn(`Yahoo search failed for ${query}: ${err.message}`);
   }
   return [];
 }
@@ -155,7 +155,7 @@ async function fetchQuote(symbol) {
       return r.data.quoteResponse.result[0];
     }
   } catch (err) {
-    console.warn(`Yahoo quote fetch failed for ${symbol}: ${err.message}`);
+    // console.warn(`Yahoo quote fetch failed for ${symbol}: ${err.message}`);
   }
   return null;
 }
@@ -181,8 +181,9 @@ function extractSymbols(text) {
   const doc = nlp(text);
 
   // Rule 1: Uppercase words (1-5 letters) possibly followed by Corp, Inc etc.
-  doc.match('(#UpperCase | #ProperNoun ){1,2} (Corp | Inc | Ltd | LLC | Co | Group | Tech | AI | ML | Labs)?').forEach(match => {
+  doc.match('( #UpperCase | #ProperNoun ){1,2} (Corp | Inc | Ltd | LLC | Co | Group | Tech | AI | ML | Labs)?').forEach(match => {
     const potential = match.text().toUpperCase();
+    // Filter based on length and common non-tickers
     if (potential.length >= 1 && potential.length <= 5 && !KEYWORDS.includes(potential.toLowerCase())) {
       potentialSymbols.add(potential);
     }
@@ -200,7 +201,22 @@ function extractSymbols(text) {
 
   // Filter out common words missed earlier
   const filteredSymbols = Array.from(potentialSymbols).filter(s => {
-    return !['AI', 'ML', 'LLM', 'GPT', 'COM', 'NET', 'ORG', 'CO', 'INC', 'LTD', 'INC.', 'LTD.', 'AI.', 'ML.'].includes(s) && s.length > 1;
+    return ![
+      'AI',
+      'ML',
+      'LLM',
+      'GPT',
+      'COM',
+      'NET',
+      'ORG',
+      'CO',
+      'INC',
+      'LTD',
+      'INC.',
+      'LTD.',
+      'AI.',
+      'ML.'
+    ].includes(s) && s.length > 1;
   });
 
   return filteredSymbols;
@@ -328,7 +344,7 @@ async function rankStocks(candidates) {
   const otherCandidates = ranked.filter(s => !s.isSmallCap || !s.isAiRelated);
   const topOthers = otherCandidates.slice(0, 5 - topSmallCaps.length);
 
-  return [...topSmallCaps, ...topOthers].slice(0, 5);
+  return [...topSmallCaps, ...topOthers].slice(0, 5); // Final top 5
 }
 
 // --- HTML Generation ---
@@ -399,6 +415,7 @@ function generateNewsletterHTML(relevantArticles, topPicks) {
       const isPositive = change >= 0;
       const changeClass = isPositive ? 'positive' : 'negative';
 
+      // LINK UPDATED to Yahoo News Topic page
       const newsUrl = `https://finance.yahoo.com/news/topic/${symbol}`;
       const newsButton = `<a href="${newsUrl}" target="_blank">View News</a>`;
 
@@ -425,25 +442,24 @@ function generateNewsletterHTML(relevantArticles, topPicks) {
         </div>
       `;
     }).join('')}
-    ` : ''; // End of topPicks section
+    ` : ''} {/* End of topPicks section */}
 
-    // --- Other Relevant Articles ---
-    if (relevantArticles.length > 0) {
-      html += `<h2>📰 Latest AI & Tech News</h2>`;
-      relevantArticles.slice(0, 8).forEach(article => {
-        const formattedDate = article.pubDate ? DateTime.fromJSDate(article.pubDate).toFormat('LLL d, yyyy') : '';
-        const source = article.source ? ` from ${article.source}` : '';
-        html += `
-          <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
-            <h3><a href="${article.link}" target="_blank">${article.title}</a></h3>
-            <p class="meta-info">${formattedDate}${source}</p>
-            <p class="article-summary">${article.summary}</p>
-          </div>
-        `;
-      });
-    }
+    {/* --- Other Relevant Articles --- */}
+    {relevantArticles.length > 0 && (
+      html += `<h2>📰 Latest AI & Tech News</h2>`
+    )}
+    {relevantArticles.slice(0, 8).map(article => {
+      const formattedDate = article.pubDate ? DateTime.fromJSDate(article.pubDate).toFormat('LLL d, yyyy') : '';
+      const source = article.source ? ` from ${article.source}` : '';
+      return `
+        <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
+          <h3><a href="${article.link}" target="_blank">${article.title}</a></h3>
+          <p class="meta-info">${formattedDate}${source}</p>
+          <p class="article-summary">${article.summary}</p>
+        </div>
+      `;
+    }).join('')}
 
-    html += `
     <div class="footer">
       <p>AI Investor Daily - Curated AI & Tech Insights</p>
       <p>Market data from Yahoo Finance. Ratings and sentiment are informational.</p>
@@ -460,7 +476,7 @@ function generateNewsletterHTML(relevantArticles, topPicks) {
 
 async function main() {
   console.log('Starting AI Investor Daily Newsletter Generation...');
-  
+
   // Clean output directory
   if (fs.existsSync(OUTPUT_DIR)) {
     fs.rmSync(OUTPUT_DIR, { recursive: true, force: true });
