@@ -202,7 +202,7 @@ function buildEmailHtml(dateISO, picks, articles) {
 
   const picksHtml = displayPicks.map((p, idx) => {
     const displayName = escapeHtml(p.fullName || p.name || p.ticker || `Pick ${idx+1}`);
-    const tickerText = p.ticker ? ` (${escapeHtml(p.ticker)})` : '';
+    const tickerText = p.ticker ? ` (<a href="https://finance.yahoo.com/quote/${encodeURIComponent(p.ticker)}" target="_blank">${escapeHtml(p.ticker)}</a>)` : '';
     const marketCapText = p.marketCap ? `<br><strong>Market cap:</strong> ${formatMoney(p.marketCap)}` : '';
     const href = p.link || (p.ticker ? `https://finance.yahoo.com/quote/${encodeURIComponent(p.ticker)}` : 'https://finance.yahoo.com');
     
